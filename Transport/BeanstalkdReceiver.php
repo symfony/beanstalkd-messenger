@@ -14,6 +14,7 @@ namespace Symfony\Component\Messenger\Bridge\Beanstalkd\Transport;
 use Symfony\Component\Messenger\Envelope;
 use Symfony\Component\Messenger\Exception\LogicException;
 use Symfony\Component\Messenger\Exception\MessageDecodingFailedException;
+use Symfony\Component\Messenger\Stamp\SentForRetryStamp;
 use Symfony\Component\Messenger\Stamp\TransportMessageIdStamp;
 use Symfony\Component\Messenger\Transport\Receiver\KeepaliveReceiverInterface;
 use Symfony\Component\Messenger\Transport\Receiver\MessageCountAwareInterface;
@@ -48,7 +49,10 @@ class BeanstalkdReceiver implements KeepaliveReceiverInterface, MessageCountAwar
                 'headers' => $beanstalkdEnvelope['headers'],
             ]);
         } catch (MessageDecodingFailedException $exception) {
-            $this->connection->reject($beanstalkdEnvelope['id']);
+            $this->connection->reject(
+                $beanstalkdEnvelope['id'],
+                $this->connection->getMessagePriority($beanstalkdEnvelope['id']),
+            );
 
             throw $exception;
         }
@@ -68,7 +72,11 @@ class BeanstalkdReceiver implements KeepaliveReceiverInterface, MessageCountAwar
 
     public function reject(Envelope $envelope): void
     {
-        $this->connection->reject($this->findBeanstalkdReceivedStamp($envelope)->getId());
+        $this->connection->reject(
+            $this->findBeanstalkdReceivedStamp($envelope)->getId(),
+            $envelope->last(BeanstalkdPriorityStamp::class)?->priority,
+            $envelope->last(SentForRetryStamp::class)?->isSent ?? false,
+        );
     }
 
     public function keepalive(Envelope $envelope, ?int $seconds = null): void

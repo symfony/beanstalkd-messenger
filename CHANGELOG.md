@@ -5,6 +5,7 @@ CHANGELOG
 ---
 
  * Add `BeanstalkdPriorityStamp` option to allow setting the message priority
+ * Add `bury_on_reject` option to bury failed messages instead of deleting them
 
 7.2
 ---
