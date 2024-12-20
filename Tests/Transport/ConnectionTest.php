@@ -297,6 +297,41 @@ final class ConnectionTest extends TestCase
         $this->assertSame($id, (int) $returnedId);
     }
 
+    public function testSendWithPriority()
+    {
+        $tube = 'xyz';
+
+        $body = 'foo';
+        $headers = ['test' => 'bar'];
+        $delay = 1000;
+        $priority = 2;
+        $expectedDelay = $delay / 1000;
+
+        $id = 110;
+
+        $client = $this->createMock(PheanstalkInterface::class);
+        $client->expects($this->once())->method('useTube')->with($tube)->willReturn($client);
+        $client->expects($this->once())->method('put')->with(
+            $this->callback(function (string $data) use ($body, $headers): bool {
+                $expectedMessage = json_encode([
+                    'body' => $body,
+                    'headers' => $headers,
+                ]);
+
+                return $expectedMessage === $data;
+            }),
+            $priority,
+            $expectedDelay,
+            90
+        )->willReturn(new Job($id, 'foobar'));
+
+        $connection = new Connection(['tube_name' => $tube], $client);
+
+        $returnedId = $connection->send($body, $headers, $delay, $priority);
+
+        $this->assertSame($id, (int) $returnedId);
+    }
+
     public function testSendWhenABeanstalkdExceptionOccurs()
     {
         $tube = 'xyz';

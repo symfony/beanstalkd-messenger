@@ -1,6 +1,11 @@
 CHANGELOG
 =========
 
+7.3
+---
+
+ * Add `BeanstalkdPriorityStamp` option to allow setting the message priority
+
 7.2
 ---
 
