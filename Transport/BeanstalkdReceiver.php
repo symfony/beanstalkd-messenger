@@ -18,6 +18,7 @@ use Symfony\Component\Messenger\Transport\Receiver\KeepaliveReceiverInterface;
 use Symfony\Component\Messenger\Transport\Receiver\MessageCountAwareInterface;
 use Symfony\Component\Messenger\Transport\Serialization\PhpSerializer;
 use Symfony\Component\Messenger\Transport\Serialization\SerializerInterface;
+use Symfony\Component\Messenger\Stamp\TransportMessageIdStamp;
 
 /**
  * @author Antonio Pauletich <antonio.pauletich95@gmail.com>
@@ -52,7 +53,12 @@ class BeanstalkdReceiver implements KeepaliveReceiverInterface, MessageCountAwar
             throw $exception;
         }
 
-        return [$envelope->with(new BeanstalkdReceivedStamp($beanstalkdEnvelope['id'], $this->connection->getTube()))];
+        return [$envelope
+            ->withoutAll(TransportMessageIdStamp::class)
+            ->with(
+                new BeanstalkdReceivedStamp($beanstalkdEnvelope['id'], $this->connection->getTube()),
+                new TransportMessageIdStamp($beanstalkdEnvelope['id']),
+            )];
     }
 
     public function ack(Envelope $envelope): void
