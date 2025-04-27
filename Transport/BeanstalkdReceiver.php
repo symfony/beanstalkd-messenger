@@ -14,11 +14,11 @@ namespace Symfony\Component\Messenger\Bridge\Beanstalkd\Transport;
 use Symfony\Component\Messenger\Envelope;
 use Symfony\Component\Messenger\Exception\LogicException;
 use Symfony\Component\Messenger\Exception\MessageDecodingFailedException;
+use Symfony\Component\Messenger\Stamp\TransportMessageIdStamp;
 use Symfony\Component\Messenger\Transport\Receiver\KeepaliveReceiverInterface;
 use Symfony\Component\Messenger\Transport\Receiver\MessageCountAwareInterface;
 use Symfony\Component\Messenger\Transport\Serialization\PhpSerializer;
 use Symfony\Component\Messenger\Transport\Serialization\SerializerInterface;
-use Symfony\Component\Messenger\Stamp\TransportMessageIdStamp;
 
 /**
  * @author Antonio Pauletich <antonio.pauletich95@gmail.com>
