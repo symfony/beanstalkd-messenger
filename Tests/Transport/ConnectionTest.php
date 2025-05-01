@@ -16,6 +16,7 @@ use Pheanstalk\Contract\PheanstalkPublisherInterface;
 use Pheanstalk\Contract\PheanstalkSubscriberInterface;
 use Pheanstalk\Exception;
 use Pheanstalk\Exception\ClientException;
+use Pheanstalk\Exception\ConnectionException;
 use Pheanstalk\Exception\DeadlineSoonException;
 use Pheanstalk\Exception\ServerException;
 use Pheanstalk\Pheanstalk;
@@ -131,6 +132,7 @@ final class ConnectionTest extends TestCase
     public function testGet()
     {
         $id = '1234';
+        $id2 = '1235';
         $beanstalkdEnvelope = [
             'body' => 'foo',
             'headers' => 'bar',
@@ -140,13 +142,52 @@ final class ConnectionTest extends TestCase
         $timeout = 44;
 
         $tubeList = new TubeList($tubeName = new TubeName($tube), $tubeNameDefault = new TubeName('default'));
-        $job = new Job(new JobId($id), json_encode($beanstalkdEnvelope));
 
         $client = $this->createMock(PheanstalkInterface::class);
         $client->expects($this->once())->method('watch')->with($tubeName)->willReturn(2);
         $client->expects($this->once())->method('listTubesWatched')->willReturn($tubeList);
         $client->expects($this->once())->method('ignore')->with($tubeNameDefault)->willReturn(1);
-        $client->expects($this->once())->method('reserveWithTimeout')->with($timeout)->willReturn($job);
+        $client->expects($this->exactly(2))->method('reserveWithTimeout')->with($timeout)->willReturnOnConsecutiveCalls(
+            new Job(new JobId($id), json_encode($beanstalkdEnvelope)),
+            new Job(new JobId($id2), json_encode($beanstalkdEnvelope)),
+        );
+
+        $connection = new Connection(['tube_name' => $tube, 'timeout' => $timeout], $client);
+
+        $envelope = $connection->get();
+
+        $this->assertSame($id, $envelope['id']);
+        $this->assertSame($beanstalkdEnvelope['body'], $envelope['body']);
+        $this->assertSame($beanstalkdEnvelope['headers'], $envelope['headers']);
+
+        $envelope = $connection->get();
+
+        $this->assertSame($id2, $envelope['id']);
+        $this->assertSame($beanstalkdEnvelope['body'], $envelope['body']);
+        $this->assertSame($beanstalkdEnvelope['headers'], $envelope['headers']);
+    }
+
+    public function testGetOnReconnect()
+    {
+        $id = '1234';
+        $beanstalkdEnvelope = [
+            'body' => 'foo',
+            'headers' => 'bar',
+        ];
+
+        $tube = 'baz';
+        $timeout = 44;
+
+        $tubeList = new TubeList($tubeName = new TubeName($tube), $tubeNameDefault = new TubeName('default'));
+
+        $client = $this->createMock(PheanstalkInterface::class);
+        $client->expects($this->exactly(2))->method('watch')->with($tubeName)->willReturn(2);
+        $client->expects($this->exactly(2))->method('listTubesWatched')->willReturn($tubeList);
+        $client->expects($this->exactly(2))->method('ignore')->with($tubeNameDefault)->willReturn(1);
+        $client->expects($this->exactly(2))->method('reserveWithTimeout')->with($timeout)->willReturnOnConsecutiveCalls(
+            $this->throwException(new ConnectionException('123', 'foobar')),
+            new Job(new JobId($id), json_encode($beanstalkdEnvelope)),
+        );
 
         $connection = new Connection(['tube_name' => $tube, 'timeout' => $timeout], $client);
 
@@ -370,10 +411,11 @@ final class ConnectionTest extends TestCase
         $expectedDelay = $delay / 1000;
 
         $id = '110';
+        $id2 = '111';
 
         $client = $this->createMock(PheanstalkInterface::class);
         $client->expects($this->once())->method('useTube')->with(new TubeName($tube));
-        $client->expects($this->once())->method('put')->with(
+        $client->expects($this->exactly(2))->method('put')->with(
             $this->callback(function (string $data) use ($body, $headers): bool {
                 $expectedMessage = json_encode([
                     'body' => $body,
@@ -385,7 +427,51 @@ final class ConnectionTest extends TestCase
             1024,
             $expectedDelay,
             90
-        )->willReturn(new Job(new JobId($id), 'foobar'));
+        )->willReturnOnConsecutiveCalls(
+            new Job(new JobId($id), 'foobar'),
+            new Job(new JobId($id2), 'foobar'),
+        );
+
+        $connection = new Connection(['tube_name' => $tube], $client);
+
+        $returnedId = $connection->send($body, $headers, $delay);
+
+        $this->assertSame($id, $returnedId);
+
+        $returnedId = $connection->send($body, $headers, $delay);
+
+        $this->assertSame($id2, $returnedId);
+    }
+
+    public function testSendOnReconnect()
+    {
+        $tube = 'xyz';
+
+        $body = 'foo';
+        $headers = ['test' => 'bar'];
+        $delay = 1000;
+        $expectedDelay = $delay / 1000;
+
+        $id = '110';
+
+        $client = $this->createMock(PheanstalkInterface::class);
+        $client->expects($this->exactly(2))->method('useTube')->with(new TubeName($tube));
+        $client->expects($this->exactly(2))->method('put')->with(
+            $this->callback(function (string $data) use ($body, $headers): bool {
+                $expectedMessage = json_encode([
+                    'body' => $body,
+                    'headers' => $headers,
+                ]);
+
+                return $expectedMessage === $data;
+            }),
+            1024,
+            $expectedDelay,
+            90
+        )->willReturnOnConsecutiveCalls(
+            $this->throwException(new ConnectionException('123', 'foobar')),
+            new Job(new JobId($id), 'foobar'),
+        );
 
         $connection = new Connection(['tube_name' => $tube], $client);
 
@@ -520,4 +606,5 @@ final class ConnectionTest extends TestCase
 
 interface PheanstalkInterface extends PheanstalkPublisherInterface, PheanstalkSubscriberInterface, PheanstalkManagerInterface
 {
+    public function disconnect(): void;
 }

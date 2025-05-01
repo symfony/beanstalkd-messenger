@@ -18,7 +18,6 @@ use Pheanstalk\Contract\SocketFactoryInterface;
 use Pheanstalk\Exception;
 use Pheanstalk\Exception\ConnectionException;
 use Pheanstalk\Pheanstalk;
-use Pheanstalk\Values\Job as PheanstalkJob;
 use Pheanstalk\Values\JobId;
 use Pheanstalk\Values\TubeName;
 use Symfony\Component\Messenger\Exception\InvalidArgumentException;
@@ -44,6 +43,9 @@ class Connection
     private int $timeout;
     private int $ttr;
     private bool $buryOnReject;
+
+    private bool $usingTube = false;
+    private bool $watchingTube = false;
 
     /**
      * Constructor.
@@ -139,7 +141,7 @@ class Connection
         }
 
         return $this->withReconnect(function () use ($message, $delay, $priority) {
-            $this->client->useTube($this->tube);
+            $this->useTube();
             $job = $this->client->put(
                 $message,
                 $priority ?? PheanstalkPublisherInterface::DEFAULT_PRIORITY,
@@ -153,7 +155,11 @@ class Connection
 
     public function get(): ?array
     {
-        $job = $this->getFromTube();
+        $job = $this->withReconnect(function () {
+            $this->watchTube();
+
+            return $this->client->reserveWithTimeout($this->timeout);
+        });
 
         if (null === $job) {
             return null;
@@ -174,25 +180,10 @@ class Connection
         ];
     }
 
-    private function getFromTube(): ?PheanstalkJob
-    {
-        return $this->withReconnect(function () {
-            if ($this->client->watch($this->tube) > 1) {
-                foreach ($this->client->listTubesWatched() as $tube) {
-                    if ((string) $tube !== (string) $this->tube) {
-                        $this->client->ignore($tube);
-                    }
-                }
-            }
-
-            return $this->client->reserveWithTimeout($this->timeout);
-        });
-    }
-
     public function ack(string $id): void
     {
         $this->withReconnect(function () use ($id) {
-            $this->client->useTube($this->tube);
+            $this->useTube();
             $this->client->delete(new JobId($id));
         });
     }
@@ -200,7 +191,7 @@ class Connection
     public function reject(string $id, ?int $priority = null, bool $forceDelete = false): void
     {
         $this->withReconnect(function () use ($id, $priority, $forceDelete) {
-            $this->client->useTube($this->tube);
+            $this->useTube();
 
             if (!$forceDelete && $this->buryOnReject) {
                 $this->client->bury(new JobId($id), $priority ?? PheanstalkPublisherInterface::DEFAULT_PRIORITY);
@@ -213,7 +204,7 @@ class Connection
     public function keepalive(string $id): void
     {
         $this->withReconnect(function () use ($id) {
-            $this->client->useTube($this->tube);
+            $this->useTube();
             $this->client->touch(new JobId($id));
         });
     }
@@ -221,7 +212,7 @@ class Connection
     public function getMessageCount(): int
     {
         return $this->withReconnect(function () {
-            $this->client->useTube($this->tube);
+            $this->useTube();
             $tubeStats = $this->client->statsTube($this->tube);
 
             return $tubeStats->currentJobsReady;
@@ -237,6 +228,33 @@ class Connection
         });
     }
 
+    private function useTube(): void
+    {
+        if ($this->usingTube) {
+            return;
+        }
+
+        $this->client->useTube($this->tube);
+        $this->usingTube = true;
+    }
+
+    private function watchTube(): void
+    {
+        if ($this->watchingTube) {
+            return;
+        }
+
+        if ($this->client->watch($this->tube) > 1) {
+            foreach ($this->client->listTubesWatched() as $tube) {
+                if ((string) $tube !== (string) $this->tube) {
+                    $this->client->ignore($tube);
+                }
+            }
+        }
+
+        $this->watchingTube = true;
+    }
+
     private function withReconnect(callable $command): mixed
     {
         try {
@@ -244,6 +262,9 @@ class Connection
                 return $command();
             } catch (ConnectionException) {
                 $this->client->disconnect();
+
+                $this->usingTube = false;
+                $this->watchingTube = false;
 
                 return $command();
             }
