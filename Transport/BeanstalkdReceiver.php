@@ -35,7 +35,10 @@ class BeanstalkdReceiver implements KeepaliveReceiverInterface, MessageCountAwar
         $this->serializer = $serializer ?? new PhpSerializer();
     }
 
-    public function get(): iterable
+    /**
+     * @param int $fetchSize
+     */
+    public function get(/* int $fetchSize = 1 */): iterable
     {
         if (!$beanstalkdEnvelope = $this->connection->get()) {
             return;
